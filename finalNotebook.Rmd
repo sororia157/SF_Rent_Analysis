@@ -1,0 +1,150 @@
+---
+title: "San Francisco Rent Analysis"
+output: html_notebook
+---
+
+```{r, warning = F}
+library(tidyverse)
+library(ggplot2)
+library(report)
+
+# Load Data --------------------------------------------------
+data <- read.csv("F:/Benny/SJSU Stuff/math 167R/final/Rent_Board_Housing_Inventory_20241125.csv")
+
+filtered_data <- filter(data, occupancy_type == "Occupied by non-owner")
+filtered_data <- filtered_data[c("unique_id", "block_num", "submission_year", "bedroom_count", "bathroom_count",
+                                 "square_footage", "monthly_rent", "base_rent_includes_water", "base_rent_includes_natural_gas",
+                                 "base_rent_includes_electricity", "base_rent_includes_refuse_recycling",
+                                 "base_rent_includes_other_utilities", "year_property_built", "supervisor_district")]
+
+# Cleaning Data --------------------------------------------------
+# Omit NA values and characters that are unnecessary 
+filtered_data <- na.omit(filtered_data)
+filtered_data <- filtered_data[!grepl("^\\$0", filtered_data$monthly_rent),]
+filtered_data$monthly_rent <- gsub("[$,]", "", filtered_data$monthly_rent)
+filtered_data$monthly_rent <- trimws(filtered_data$monthly_rent)
+filtered_data$monthly_rent <- gsub("[^0-9\\-]", "", filtered_data$monthly_rent)
+
+replace_range_with_median <- function(rent) {
+  if (rent == "" | is.na(rent)) {
+    return(NA)
+  }
+  rent <- gsub("\\s*-\\s*", "-", rent)
+  
+  if (grepl("-", rent)) {
+    rent_range <- as.numeric(unlist(strsplit(rent, "-")))
+    if (all(!is.na(rent_range))) {
+      return(median(rent_range, na.rm = TRUE))
+    } 
+    else {
+      return(NA)
+    }
+  } 
+  else {
+    rent_value <- as.numeric(rent)
+    if (is.na(rent_value)) {
+      return(NA) 
+    } 
+    else {
+      return(rent_value)
+    }
+  }
+}
+
+filtered_data$monthly_rent <- sapply(filtered_data$monthly_rent, replace_range_with_median)
+filtered_data$monthly_rent <- as.numeric(filtered_data$monthly_rent)
+filtered_data$monthly_rent[is.na(filtered_data$monthly_rent)] <- median(filtered_data$monthly_rent, na.rm = TRUE)
+
+# Question 1 Code --------------------------------------------------
+factored_district <- factor(filtered_data$supervisor_district, levels = c(1:11))
+log_rent <- log(filtered_data$monthly_rent)
+filtered_data["log_rent"] <- log_rent
+
+ggplot(filtered_data,
+       aes(x = factored_district,
+           y = log_rent)) +
+  geom_boxplot() +
+  ggtitle("Rent Price Distribution by Supervisor District") +
+  xlab("Supervisor District") +
+  ylab("Rent Price ($)")
+
+supervisor_district_average_rent <- filtered_data |>
+  group_by(supervisor_district) |>
+  summarize(average_rent = mean(monthly_rent)) |>
+  print()
+
+# Perform an ANOVA and Kurskal test
+res_aov <- aov(monthly_rent ~ supervisor_district,
+               data = filtered_data)
+
+kruskal.test(monthly_rent ~ supervisor_district, data = filtered_data)
+
+report(res_aov)
+
+# Question 2 Code --------------------------------------------------
+clean_bedroom_entries <- function(bedroom) {
+  if (grepl("Studio|studio|Vacant|0", bedroom)) {
+    return (0)
+  }
+  else if (grepl("One|1", bedroom)) {
+    return (1)
+  }
+  else if (grepl("Two|2", bedroom)) {
+    return (2)
+  }
+  else if (grepl("Three|3", bedroom)) {
+    return (3)
+  }
+  else {
+    return ("4+")
+  }
+}
+
+filtered_data$bedroom_count <- sapply(filtered_data$bedroom_count, clean_bedroom_entries)
+
+ggplot(filtered_data,
+       aes(x = factor(supervisor_district, c(1:11)),
+           fill = bedroom_count)) +
+  geom_bar(position="stack") +
+  ggtitle("Bedroom Distribution by Supervisor District") +
+  xlab("Supervisor District") +
+  labs(fill = "Bedroom Count")
+
+mean_bedroom_price <- filtered_data |>
+  group_by(bedroom_count) |>
+  summarize(mean_rent = mean(monthly_rent, na.rm = T)) |>
+  print()
+
+# Question 3 Code --------------------------------------------------
+mean_rent_change <- filtered_data |>
+  group_by(supervisor_district, submission_year) |>
+  summarize(mean_rent = mean(monthly_rent, na.rm = T))
+
+ggplot(mean_rent_change,
+       aes(x = submission_year,
+           y = log(mean_rent),
+           color = factor(supervisor_district, c(1:11)))) +
+  geom_line() + 
+  scale_color_manual(values = c("Maroon", "Brown", "Steelblue", "Navy", 
+                                "Red", "Orange", "Tan", "Green", "Cyan", 
+                                "Blue", "Purple")) +
+  ggtitle("Average Rent Price Change") +
+  xlab("Submission Year") +
+  ylab("Mean Rent ($)") +
+  labs(color = "Supervisor District")
+
+ggplot(mean_rent_change,
+       aes(x = submission_year,
+           y = log(mean_rent),
+           color = factor(supervisor_district, c(1:11)))) +
+  geom_point() + 
+  scale_color_manual(values = c("Maroon", "Brown", "Steelblue", "Navy", 
+                                "Red", "Orange", "Tan", "Green", "Cyan", 
+                                "Blue", "Purple")) +
+  geom_smooth(method = "lm", se = F) +
+  facet_wrap(.~supervisor_district) +
+  ggtitle("Supervisor District Linear Regression") +
+  xlab("Submission Year") + 
+  ylab("Mean Rent ($)") +
+  labs(color = "Supervisor District")
+```
